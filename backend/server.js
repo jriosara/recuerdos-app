@@ -13,10 +13,12 @@ app.use(express.static('public'));
 
 // Middlewares
 app.use(cors({
-  origin: ['https://recuerdos-app.vercel.app', 'https://recuerdos-app-git-main-jriosara.vercel.app', 'http://localhost:3000'],
+  origin: [
+    'https://recuerdos-app-git-main-alexs-projects-4ce180e5.vercel.app',
+    'http://localhost:3000'
+  ],
   credentials: true
 }));
-app.use(express.json());
 
 // Configurar Cloudinary
 cloudinary.config({

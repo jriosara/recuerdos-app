@@ -72,80 +72,14 @@ const upload = multer({
   storage: multer.memoryStorage()
 });
 
-// --- MIDDLEWARE DE AUTENTICACIÓN ---
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-
-  if (!token) return res.sendStatus(401); // No autorizado
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403); // Token inválido
-    req.user = user;
-    next();
-  });
-};
-
-
-// --- RUTAS DE AUTENTICACIÓN ---
-
-// Registro
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: 'Faltan datos' });
-
-    // Hashear contraseña
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    await pool.query(
-      'INSERT INTO users (username, password) VALUES ($1, $2)',
-      [username, hashedPassword]
-    );
-
-    res.status(201).json({ message: 'Usuario registrado exitosamente' });
-  } catch (error) {
-    if (error.code === '23505') {
-      return res.status(400).json({ error: 'El usuario ya existe' });
-    }
-    res.status(500).json({ error: 'Error al registrar usuario' });
-  }
-});
-
-// Login
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    const { rows: users } = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
-
-    if (users.length === 0) return res.status(400).json({ error: 'Usuario no encontrado' });
-
-    const user = users[0];
-    const validPassword = await bcrypt.compare(password, user.password);
-
-    if (!validPassword) return res.status(400).json({ error: 'Contraseña incorrecta' });
-
-    // Crear token
-    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '24h' });
-
-    res.json({ token, username: user.username });
-  } catch (error) {
-    res.status(500).json({ error: 'Error al iniciar sesión' });
-  }
-});
-
-
-// --- RUTAS DE RECUERDOS (PROTEGIDAS) ---
-
-// Obtener todos los recuerdos DEL USUARIO
-app.get('/api/recuerdos', authenticateToken, async (req, res) => {
+// Obtener todos los recuerdos
+app.get('/api/recuerdos', async (req, res) => {
   try {
     const { search, year, month, order } = req.query;
-    const userId = req.user.id;
     
-    let query = 'SELECT * FROM recuerdos WHERE user_id = $1';
-    const params = [userId];
-    let index = 2;
+    let query = 'SELECT * FROM recuerdos WHERE 1=1';
+    const params = [];
+    let index = 1;
     
     if (search) {
       query += ` AND titulo ILIKE $${index}`;
@@ -179,10 +113,10 @@ app.get('/api/recuerdos', authenticateToken, async (req, res) => {
   }
 });
 
-// Obtener un recuerdo por ID (Solo si es del usuario)
-app.get('/api/recuerdos/:id', authenticateToken, async (req, res) => {
+// Obtener un recuerdo por ID
+app.get('/api/recuerdos/:id', async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM recuerdos WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    const { rows } = await pool.query('SELECT * FROM recuerdos WHERE id = $1', [req.params.id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Recuerdo no encontrado' });
     }
@@ -194,11 +128,9 @@ app.get('/api/recuerdos/:id', authenticateToken, async (req, res) => {
 });
 
 // Crear nuevo recuerdo
-app.post('/api/recuerdos', authenticateToken, upload.single('foto'), async (req, res) => {
+app.post('/api/recuerdos', upload.single('foto'), async (req, res) => {
   try {
     const { titulo, descripcion, fecha } = req.body;
-    const userId = req.user.id;
-
     if (!req.file) {
       return res.status(400).json({ error: 'La foto es obligatoria' });
     }
@@ -223,14 +155,13 @@ app.post('/api/recuerdos', authenticateToken, upload.single('foto'), async (req,
     const publicUrl = publicData.publicUrl;
 
     const result = await pool.query(
-      'INSERT INTO recuerdos (titulo, descripcion, fecha, url_foto, public_id, user_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+      'INSERT INTO recuerdos (titulo, descripcion, fecha, url_foto, public_id, user_id) VALUES ($1, $2, $3, $4, $5, NULL) RETURNING id',
       [
         titulo,
         descripcion,
         fecha,
         publicUrl,
-        filePath,
-        userId
+        filePath
       ]
     );
 
@@ -251,13 +182,12 @@ app.post('/api/recuerdos', authenticateToken, upload.single('foto'), async (req,
 
 
 // Actualizar recuerdo
-app.put('/api/recuerdos/:id', authenticateToken, upload.single('foto'), async (req, res) => {
+app.put('/api/recuerdos/:id', upload.single('foto'), async (req, res) => {
   try {
     const { titulo, descripcion, fecha } = req.body;
     const { id } = req.params;
-    const userId = req.user.id;
 
-    const { rows: existing } = await pool.query('SELECT * FROM recuerdos WHERE id = $1 AND user_id = $2', [id, userId]);
+    const { rows: existing } = await pool.query('SELECT * FROM recuerdos WHERE id = $1', [id]);
     if (existing.length === 0) {
       return res.status(404).json({ error: 'Recuerdo no encontrado o no autorizado' });
     }
@@ -304,12 +234,10 @@ app.put('/api/recuerdos/:id', authenticateToken, upload.single('foto'), async (r
 });
 
 // Eliminar recuerdo
-app.delete('/api/recuerdos/:id', authenticateToken, async (req, res) => {
+app.delete('/api/recuerdos/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const userId = req.user.id;
-
-    const { rows } = await pool.query('SELECT public_id FROM recuerdos WHERE id = $1 AND user_id = $2', [id, userId]);
+    const { rows } = await pool.query('SELECT public_id FROM recuerdos WHERE id = $1', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Recuerdo no encontrado o no autorizado' });
     }

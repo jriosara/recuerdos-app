@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './App.css';
 import Login from './Login';
@@ -42,12 +42,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (token) {
-      cargarRecuerdos();
-    }
-  }, [token, filtros]); 
-
-  useEffect(() => {
     localStorage.setItem('temaOscuro', JSON.stringify(temaOscuro));
     document.body.className = temaOscuro ? 'tema-oscuro' : 'tema-claro';
   }, [temaOscuro]);
@@ -68,22 +62,19 @@ function App() {
     setRecuerdos([]);
   };
 
-  // API Calls with Auth Header
-  const getAuthHeaders = () => ({
-    headers: { 'Authorization': `Bearer ${token}` }
-  });
-
-  const cargarRecuerdos = async () => {
+  const cargarRecuerdos = useCallback(async () => {
+    if (!token) return;
+ 
     try {
       const params = new URLSearchParams();
       if (filtros.busqueda) params.append('search', filtros.busqueda);
       if (filtros.anio) params.append('year', filtros.anio);
       if (filtros.mes) params.append('month', filtros.mes);
       params.append('order', filtros.orden);
-
+ 
       const response = await axios.get(`${API_URL}/api/recuerdos`, { 
         params,
-        ...getAuthHeaders()
+        headers: { 'Authorization': `Bearer ${token}` }
       });
       setRecuerdos(response.data);
     } catch (error) {
@@ -92,7 +83,13 @@ function App() {
         handleLogout();
       }
     }
-  };
+  }, [token, filtros, handleLogout]);
+ 
+  useEffect(() => {
+    if (token) {
+      cargarRecuerdos();
+    }
+  }, [token, cargarRecuerdos]); 
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -157,7 +154,9 @@ function App() {
     if (!window.confirm('¿Eliminar este recuerdo?')) return;
 
     try {
-      await axios.delete(`${API_URL}/api/recuerdos/${id}`, getAuthHeaders());
+      await axios.delete(`${API_URL}/api/recuerdos/${id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       cargarRecuerdos();
     } catch (error) {
       alert('Error al eliminar recuerdo');

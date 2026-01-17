@@ -19,7 +19,8 @@ app.use(cors({
   origin: [
     'http://localhost:3000',
     'http://localhost:3001',
-    'https://recuerdos-app.vercel.app'
+    'https://recuerdos-app.vercel.app',
+    'https://recuerdos-8c3p41f2l-alexs-projects-4ce180e5.vercel.app'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -27,7 +28,10 @@ app.use(cors({
 
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
 const initDB = async () => {

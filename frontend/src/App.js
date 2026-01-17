@@ -46,7 +46,6 @@ function App() {
     document.body.className = temaOscuro ? 'tema-oscuro' : 'tema-claro';
   }, [temaOscuro]);
 
-  // Auth Handlers
   const handleLogin = (newToken, newUsername) => {
     setToken(newToken);
     setUsername(newUsername);
@@ -54,13 +53,13 @@ function App() {
     localStorage.setItem('username', newUsername);
   };
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     setToken(null);
     setUsername(null);
     localStorage.removeItem('token');
     localStorage.removeItem('username');
     setRecuerdos([]);
-  };
+  }, []);
 
   const cargarRecuerdos = useCallback(async () => {
     if (!token) return;

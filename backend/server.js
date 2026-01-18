@@ -26,18 +26,31 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
+// Parsear la URL de conexión
+const config = parse(process.env.DATABASE_URL);
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  host: config.host,
+  port: config.port,
+  database: config.database,
+  user: config.user,
+  password: config.password,
   ssl: {
     rejectUnauthorized: false
   },
-  // Forzar IPv4 y configuración adicional
-  connectionTimeoutMillis: 10000,
-  idleTimeoutMillis: 30000,
-  max: 20
+  // IMPORTANTE: Forzar IPv4
+  ...(config.host && { 
+    connectionTimeoutMillis: 10000,
+    idleTimeoutMillis: 30000,
+    max: 20,
+    // Esta es la clave para forzar IPv4
+    options: '-c search_path=public'
+  })
 });
 
+// Forzar IPv4 a nivel de DNS
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
 const initDB = async () => {
   try {
     await pool.query(`

@@ -9,6 +9,10 @@ const { parse } = require('pg-connection-string'); // ← AGREGAR ESTA LÍNEA
 const dns = require('dns'); // ← Y ESTA
 require('dotenv').config();
 
+
+// Forzar IPv4 a nivel de DNS
+dns.setDefaultResultOrder('ipv4first');
+
 const app = express();
 app.use(express.json());
 app.use(express.static('public'));
@@ -50,8 +54,6 @@ const pool = new Pool({
   })
 });
 
-// Forzar IPv4 a nivel de DNS
-dns.setDefaultResultOrder('ipv4first');
 const initDB = async () => {
   try {
     await pool.query(`

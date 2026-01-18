@@ -63,6 +63,10 @@ const initDB = async () => {
   }
 };
 
+// 🐛 LOGS TEMPORALES PARA DEBUGGEAR
+console.log('🔍 SUPABASE_URL:', process.env.SUPABASE_URL);
+console.log('🔍 SUPABASE_SERVICE_ROLE_KEY existe:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+console.log('🔍 SUPABASE_BUCKET:', process.env.SUPABASE_BUCKET);
 initDB();
 
 const supabase = createClient(

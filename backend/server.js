@@ -5,6 +5,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const { createClient } = require('@supabase/supabase-js');
+const { parse } = require('pg-connection-string'); // ← AGREGAR ESTA LÍNEA
+const dns = require('dns'); // ← Y ESTA
 require('dotenv').config();
 
 const app = express();

@@ -51,7 +51,6 @@ const pool = new Pool({
 });
 
 // Forzar IPv4 a nivel de DNS
-const dns = require('dns');
 dns.setDefaultResultOrder('ipv4first');
 const initDB = async () => {
   try {

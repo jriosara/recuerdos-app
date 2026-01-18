@@ -5,13 +5,13 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const { createClient } = require('@supabase/supabase-js');
-const { parse } = require('pg-connection-string'); // ← AGREGAR ESTA LÍNEA
-const dns = require('dns'); // ← Y ESTA
+const dns = require('node:dns');
 require('dotenv').config();
 
-
-// Forzar IPv4 a nivel de DNS
-dns.setDefaultResultOrder('ipv4first');
+// Forzar resolución IPv4 para evitar problemas de conexión (ENETUNREACH) en algunos entornos
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 const app = express();
 app.use(express.json());
@@ -32,26 +32,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-// Parsear la URL de conexión
-const config = parse(process.env.DATABASE_URL);
-
 const pool = new Pool({
-  host: config.host,
-  port: config.port,
-  database: config.database,
-  user: config.user,
-  password: config.password,
-  ssl: {
-    rejectUnauthorized: false
-  },
-  // IMPORTANTE: Forzar IPv4
-  ...(config.host && { 
-    connectionTimeoutMillis: 10000,
-    idleTimeoutMillis: 30000,
-    max: 20,
-    // Esta es la clave para forzar IPv4
-    options: '-c search_path=public'
-  })
+  connectionString: process.env.DATABASE_URL
 });
 
 const initDB = async () => {

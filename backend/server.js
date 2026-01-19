@@ -3,74 +3,38 @@ const cors = require('cors');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { Pool } = require('pg');
 const { createClient } = require('@supabase/supabase-js');
-const dns = require('node:dns');
 require('dotenv').config();
-
-// Forzar resolución IPv4 para evitar problemas de conexión (ENETUNREACH) en algunos entornos
-if (dns.setDefaultResultOrder) {
-  dns.setDefaultResultOrder('ipv4first');
-}
 
 const app = express();
 app.use(express.json());
 app.use(express.static('public'));
 
-// Clave secreta para JWT (debería estar en .env, pero usaremos un default para dev)
+// Clave secreta para JWT
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_key_123';
 
 // Configuración de CORS
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'https://recuerdos-app.vercel.app',
-    'https://recuerdos-8c3p41f2l-alexs-projects-4ce180e5.vercel.app'
-  ],
+  origin: function(origin, callback) {
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'https://recuerdos-app.vercel.app'
+    ];
+    
+    // Permitir todas las URLs de preview de Vercel
+    if (!origin || allowedOrigins.includes(origin) || (origin && origin.endsWith('.vercel.app'))) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
-});
-
-const initDB = async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id serial PRIMARY KEY,
-        username varchar(50) NOT NULL UNIQUE,
-        password varchar(255) NOT NULL,
-        created_at timestamptz DEFAULT now()
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS recuerdos (
-        id serial PRIMARY KEY,
-        user_id integer REFERENCES users(id) ON DELETE CASCADE,
-        titulo varchar(255) NOT NULL,
-        descripcion text,
-        fecha date NOT NULL,
-        url_foto varchar(500) NOT NULL,
-        public_id varchar(255) NOT NULL,
-        created_at timestamptz DEFAULT now(),
-        updated_at timestamptz DEFAULT now()
-      )
-    `);
-  } catch (err) {
-    console.error('Error al inicializar DB:', err);
-  }
-};
-
-// 🐛 LOGS TEMPORALES PARA DEBUGGEAR
-console.log('🔍 SUPABASE_URL:', process.env.SUPABASE_URL);
-console.log('🔍 SUPABASE_SERVICE_ROLE_KEY existe:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
-console.log('🔍 SUPABASE_BUCKET:', process.env.SUPABASE_BUCKET);
-initDB();
-
+// Inicializar Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -78,47 +42,62 @@ const supabase = createClient(
 
 const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || 'recuerdos';
 
+// Configuración de multer
 const upload = multer({
   storage: multer.memoryStorage()
 });
+
+// Verificar conexión con Supabase
+const checkConnection = async () => {
+  try {
+    const { data, error } = await supabase.from('recuerdos').select('count').limit(1);
+    if (error && error.code !== 'PGRST116') throw error;
+    console.log('✅ Conectado a Supabase correctamente');
+  } catch (err) {
+    console.error('❌ Error al conectar con Supabase:', err.message);
+  }
+};
+
+checkConnection();
 
 // Obtener todos los recuerdos
 app.get('/api/recuerdos', async (req, res) => {
   try {
     const { search, year, month, order } = req.query;
     
-    let query = 'SELECT * FROM recuerdos WHERE 1=1';
-    const params = [];
-    let index = 1;
+    let query = supabase.from('recuerdos').select('*');
     
     if (search) {
-      query += ` AND titulo ILIKE $${index}`;
-      params.push(`%${search}%`);
-      index++;
+      query = query.ilike('titulo', `%${search}%`);
     }
 
     if (year) {
-      query += ` AND EXTRACT(YEAR FROM fecha) = $${index}`;
-      params.push(year);
-      index++;
+      query = query.gte('fecha', `${year}-01-01`).lte('fecha', `${year}-12-31`);
     }
 
-    if (month) {
-      query += ` AND EXTRACT(MONTH FROM fecha) = $${index}`;
-      params.push(month);
-      index++;
+    if (month && year) {
+      const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+      const lastDay = new Date(year, month, 0).getDate();
+      const endDate = `${year}-${String(month).padStart(2, '0')}-${lastDay}`;
+      query = query.gte('fecha', startDate).lte('fecha', endDate);
     }
 
     if (order === 'antiguo') {
-      query += ' ORDER BY fecha ASC';
+      query = query.order('fecha', { ascending: true });
     } else {
-      query += ' ORDER BY fecha DESC';
+      query = query.order('fecha', { ascending: false });
     }
 
-    const { rows } = await pool.query(query, params);
-    res.json(rows);
+    const { data, error } = await query;
+    
+    if (error) {
+      console.error('Error en query:', error);
+      throw error;
+    }
+    
+    res.json(data || []);
   } catch (error) {
-    console.error(error);
+    console.error('Error al obtener recuerdos:', error);
     res.status(500).json({ error: 'Error al obtener recuerdos' });
   }
 });
@@ -126,13 +105,22 @@ app.get('/api/recuerdos', async (req, res) => {
 // Obtener un recuerdo por ID
 app.get('/api/recuerdos/:id', async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM recuerdos WHERE id = $1', [req.params.id]);
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'Recuerdo no encontrado' });
+    const { data, error } = await supabase
+      .from('recuerdos')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return res.status(404).json({ error: 'Recuerdo no encontrado' });
+      }
+      throw error;
     }
-    res.json(rows[0]);
+    
+    res.json(data);
   } catch (error) {
-    console.error(error);
+    console.error('Error:', error);
     res.status(500).json({ error: 'Error al obtener recuerdo' });
   }
 });
@@ -141,6 +129,7 @@ app.get('/api/recuerdos/:id', async (req, res) => {
 app.post('/api/recuerdos', upload.single('foto'), async (req, res) => {
   try {
     const { titulo, descripcion, fecha } = req.body;
+    
     if (!req.file) {
       return res.status(400).json({ error: 'La foto es obligatoria' });
     }
@@ -148,6 +137,7 @@ app.post('/api/recuerdos', upload.single('foto'), async (req, res) => {
     const file = req.file;
     const filePath = `recuerdos/${Date.now()}-${file.originalname}`;
 
+    // Subir imagen a Supabase Storage
     const { error: uploadError } = await supabase.storage
       .from(SUPABASE_BUCKET)
       .upload(filePath, file.buffer, {
@@ -155,32 +145,38 @@ app.post('/api/recuerdos', upload.single('foto'), async (req, res) => {
       });
 
     if (uploadError) {
+      console.error('Error al subir imagen:', uploadError);
       return res.status(500).json({ error: 'Error al subir imagen' });
     }
 
+    // Obtener URL pública
     const { data: publicData } = supabase.storage
       .from(SUPABASE_BUCKET)
       .getPublicUrl(filePath);
 
     const publicUrl = publicData.publicUrl;
 
-    const result = await pool.query(
-      'INSERT INTO recuerdos (titulo, descripcion, fecha, url_foto, public_id, user_id) VALUES ($1, $2, $3, $4, $5, NULL) RETURNING id',
-      [
+    // Insertar en base de datos
+    const { data, error } = await supabase
+      .from('recuerdos')
+      .insert([{
         titulo,
         descripcion,
         fecha,
-        publicUrl,
-        filePath
-      ]
-    );
+        url_foto: publicUrl,
+        public_id: filePath,
+        user_id: null
+      }])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error al insertar:', error);
+      throw error;
+    }
 
     res.status(201).json({
-      id: result.rows[0].id,
-      titulo,
-      descripcion,
-      fecha,
-      url_foto: publicUrl,
+      ...data,
       message: 'Recuerdo creado exitosamente'
     });
 
@@ -190,25 +186,33 @@ app.post('/api/recuerdos', upload.single('foto'), async (req, res) => {
   }
 });
 
-
 // Actualizar recuerdo
 app.put('/api/recuerdos/:id', upload.single('foto'), async (req, res) => {
   try {
     const { titulo, descripcion, fecha } = req.body;
     const { id } = req.params;
 
-    const { rows: existing } = await pool.query('SELECT * FROM recuerdos WHERE id = $1', [id]);
-    if (existing.length === 0) {
-      return res.status(404).json({ error: 'Recuerdo no encontrado o no autorizado' });
+    // Verificar que existe
+    const { data: existing, error: fetchError } = await supabase
+      .from('recuerdos')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (fetchError || !existing) {
+      return res.status(404).json({ error: 'Recuerdo no encontrado' });
     }
 
-    let updateQuery, params;
+    let updateData = { titulo, descripcion, fecha };
 
+    // Si hay nueva imagen
     if (req.file) {
+      // Eliminar imagen anterior
       await supabase.storage
         .from(SUPABASE_BUCKET)
-        .remove([existing[0].public_id]);
+        .remove([existing.public_id]);
 
+      // Subir nueva imagen
       const file = req.file;
       const filePath = `recuerdos/${Date.now()}-${file.originalname}`;
 
@@ -226,19 +230,23 @@ app.put('/api/recuerdos/:id', upload.single('foto'), async (req, res) => {
         .from(SUPABASE_BUCKET)
         .getPublicUrl(filePath);
 
-      const publicUrl = publicData.publicUrl;
-
-      updateQuery = 'UPDATE recuerdos SET titulo = $1, descripcion = $2, fecha = $3, url_foto = $4, public_id = $5 WHERE id = $6';
-      params = [titulo, descripcion, fecha, publicUrl, filePath, id];
-    } else {
-      updateQuery = 'UPDATE recuerdos SET titulo = $1, descripcion = $2, fecha = $3 WHERE id = $4';
-      params = [titulo, descripcion, fecha, id];
+      updateData.url_foto = publicData.publicUrl;
+      updateData.public_id = filePath;
     }
 
-    await pool.query(updateQuery, params);
-    res.json({ message: 'Recuerdo actualizado exitosamente' });
+    // Actualizar en base de datos
+    const { data, error } = await supabase
+      .from('recuerdos')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json({ ...data, message: 'Recuerdo actualizado exitosamente' });
   } catch (error) {
-    console.error(error);
+    console.error('Error:', error);
     res.status(500).json({ error: 'Error al actualizar recuerdo' });
   }
 });
@@ -247,26 +255,40 @@ app.put('/api/recuerdos/:id', upload.single('foto'), async (req, res) => {
 app.delete('/api/recuerdos/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { rows } = await pool.query('SELECT public_id FROM recuerdos WHERE id = $1', [id]);
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'Recuerdo no encontrado o no autorizado' });
+    
+    // Obtener info del recuerdo para eliminar imagen
+    const { data: recuerdo, error: fetchError } = await supabase
+      .from('recuerdos')
+      .select('public_id')
+      .eq('id', id)
+      .single();
+    
+    if (fetchError || !recuerdo) {
+      return res.status(404).json({ error: 'Recuerdo no encontrado' });
     }
     
+    // Eliminar imagen de storage
     await supabase.storage
       .from(SUPABASE_BUCKET)
-      .remove([rows[0].public_id]);
+      .remove([recuerdo.public_id]);
 
-    await pool.query('DELETE FROM recuerdos WHERE id = $1', [id]);
+    // Eliminar de base de datos
+    const { error } = await supabase
+      .from('recuerdos')
+      .delete()
+      .eq('id', id);
+    
+    if (error) throw error;
     
     res.json({ message: 'Recuerdo eliminado exitosamente' });
   } catch (error) {
-    console.error(error);
+    console.error('Error:', error);
     res.status(500).json({ error: 'Error al eliminar recuerdo' });
   }
 });
 
 // Iniciar servidor
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
 });

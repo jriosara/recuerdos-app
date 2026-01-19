@@ -34,6 +34,17 @@ app.use(cors({
   credentials: true
 }));
 
+// Función para sanitizar nombres de archivo
+const sanitizeFilename = (filename) => {
+  return filename
+    .normalize('NFD')                          // Descomponer caracteres especiales
+    .replace(/[\u0300-\u036f]/g, '')          // Eliminar acentos
+    .replace(/[^a-zA-Z0-9.-]/g, '_')          // Reemplazar caracteres especiales por _
+    .replace(/\s+/g, '_')                      // Reemplazar espacios por _
+    .replace(/_+/g, '_')                       // Evitar múltiples _ seguidos
+    .toLowerCase();                            // Todo en minúsculas
+};
+
 // Inicializar Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -135,7 +146,7 @@ app.post('/api/recuerdos', upload.single('foto'), async (req, res) => {
     }
 
     const file = req.file;
-    const filePath = `recuerdos/${Date.now()}-${file.originalname}`;
+    const filePath = `recuerdos/${Date.now()}-${sanitizeFilename(file.originalname)}`;
 
     // Subir imagen a Supabase Storage
     const { error: uploadError } = await supabase.storage
@@ -214,7 +225,7 @@ app.put('/api/recuerdos/:id', upload.single('foto'), async (req, res) => {
 
       // Subir nueva imagen
       const file = req.file;
-      const filePath = `recuerdos/${Date.now()}-${file.originalname}`;
+     const filePath = `recuerdos/${Date.now()}-${sanitizeFilename(file.originalname)}`; // ← CAMBIO AQUÍ
 
       const { error: uploadError } = await supabase.storage
         .from(SUPABASE_BUCKET)
